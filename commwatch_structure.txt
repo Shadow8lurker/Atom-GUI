@@ -1,0 +1,195 @@
+# Communication Watch Window - Complete Project
+
+## Project Structure
+
+```
+commwatch/
+├── package.json (root workspace)
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── release.yml
+├── apps/
+│   ├── vscode-ext/
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── src/
+│   │   │   ├── extension.ts
+│   │   │   ├── webview/
+│   │   │   └── commands/
+│   │   ├── media/
+│   │   └── README.md
+│   ├── desktop/
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── src/
+│   │   │   ├── main/
+│   │   │   ├── renderer/
+│   │   │   └── preload/
+│   │   └── electron-builder.yml
+│   └── cli/
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── src/
+│           ├── index.ts
+│           ├── commands/
+│           └── utils/
+├── packages/
+│   ├── proto-core/
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── src/
+│   │       ├── types/
+│   │       ├── message-bus/
+│   │       ├── schemas/
+│   │       └── utils/
+│   ├── transports-uart/
+│   ├── transports-spi/
+│   ├── transports-i2c/
+│   ├── transports-can/
+│   ├── transports-eth/
+│   ├── decoders/
+│   └── ui-kit/
+├── tools/
+│   └── simulators/
+├── docs/
+│   ├── quick-start.md
+│   ├── user-guide.md
+│   ├── dev-guide.md
+│   └── protocols/
+└── examples/
+    └── configs/
+```
+
+## Installation & Setup
+
+```bash
+# Install pnpm if not already installed
+npm install -g pnpm
+
+# Clone and install
+git clone <repo-url>
+cd commwatch
+pnpm install
+
+# Build all packages
+pnpm run build
+
+# Run in development
+pnpm run dev:vscode    # VS Code extension
+pnpm run dev:desktop   # Electron app
+pnpm run dev:cli       # CLI tool
+```
+
+## Quick Start
+
+### VS Code Extension
+1. Open the project in VS Code
+2. Press F5 to launch Extension Development Host
+3. Run command: `CommWatch: Open`
+4. Select a device and protocol
+5. Connect and start monitoring
+
+### Standalone Desktop App
+```bash
+pnpm run dev:desktop
+```
+
+### CLI Usage
+```bash
+# Record from UART
+commwatch record --proto uart --port COM5 --baud 115200 --out session.json
+
+# Replay to CAN
+commwatch replay --in session.json --proto can --iface vcan0
+
+# Monitor live
+commwatch monitor --proto ethernet --interface eth0 --filter "udp port 5000"
+```
+
+## Building for Production
+
+```bash
+# Build all
+pnpm run build:all
+
+# Package VS Code extension
+cd apps/vscode-ext
+pnpm run package  # Creates .vsix
+
+# Build Electron installers
+cd apps/desktop
+pnpm run dist     # Creates installers for current platform
+
+# Build CLI binary
+cd apps/cli
+pnpm run build:binary  # Creates standalone executable
+```
+
+## Testing
+
+```bash
+# Run all tests
+pnpm test
+
+# Run with coverage
+pnpm test:coverage
+
+# Run specific package tests
+pnpm --filter @commwatch/proto-core test
+
+# Run integration tests (requires simulators)
+pnpm test:integration
+```
+
+## Architecture Overview
+
+### Core Concepts
+
+1. **Transport Adapters**: Pluggable interfaces for hardware communication
+2. **Protocol Decoders**: Parse and validate protocol frames
+3. **Message Bus**: Central event system for all communication
+4. **UI Kit**: Shared React components across platforms
+5. **State Management**: Redux Toolkit for predictable state
+
+### Data Flow
+
+```
+Hardware Device
+    ↓
+Transport Adapter (UART/SPI/I²C/CAN/Ethernet)
+    ↓
+Raw Byte Stream
+    ↓
+Protocol Decoder (COBS/SLIP/EFuse/Custom)
+    ↓
+Parsed Message
+    ↓
+Message Bus (Redux Store)
+    ↓
+UI Components (Monitor/Charts/Logs)
+```
+
+## Key Features
+
+- ✅ Multi-protocol support (UART, SPI, I²C, CAN, Ethernet)
+- ✅ Real-time monitoring with <10ms latency
+- ✅ Protocol-aware decoding with CRC verification
+- ✅ Custom frame support (EFuse example included)
+- ✅ Virtual device simulators
+- ✅ Cross-platform (Windows, Linux, macOS)
+- ✅ Extensible plugin system
+- ✅ Export to CSV/JSON/PCAP-NG
+- ✅ Scripting engine for automation
+- ✅ Dark mode and accessibility features
+
+## Next Steps
+
+See detailed documentation in `/docs`:
+- [Quick Start Guide](docs/quick-start.md)
+- [User Guide](docs/user-guide.md)
+- [Developer Guide](docs/dev-guide.md)
+- [Protocol Guides](docs/protocols/)
+- [Extension Packaging](docs/extension-packaging.md)

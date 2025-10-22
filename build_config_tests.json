@@ -1,0 +1,453 @@
+// Root package.json
+{
+  "name": "commwatch-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:all": "pnpm run build && pnpm run build:vscode && pnpm run build:desktop && pnpm run build:cli",
+    "build:vscode": "cd apps/vscode-ext && pnpm run package",
+    "build:desktop": "cd apps/desktop && pnpm run dist",
+    "build:cli": "cd apps/cli && pnpm run build:binary",
+    "dev:vscode": "cd apps/vscode-ext && pnpm run watch",
+    "dev:desktop": "cd apps/desktop && pnpm run dev",
+    "dev:cli": "cd apps/cli && pnpm run dev",
+    "test": "pnpm -r run test",
+    "test:coverage": "pnpm -r run test:coverage",
+    "test:integration": "pnpm run test --filter=@commwatch/integration-tests",
+    "lint": "pnpm -r run lint",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.0",
+    "typescript": "^5.0.0",
+    "vitest": "^0.34.0",
+    "@vitest/coverage-v8": "^0.34.0"
+  }
+}
+
+// pnpm-workspace.yaml
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+
+// tsconfig.base.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "composite": true,
+    "incremental": true
+  },
+  "exclude": ["node_modules", "dist"]
+}
+
+// packages/proto-core/package.json
+{
+  "name": "@commwatch/proto-core",
+  "version": "0.1.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.21.4"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.0",
+    "typescript": "^5.0.0",
+    "vitest": "^0.34.0"
+  }
+}
+
+// packages/proto-core/src/__tests__/crc.test.ts
+import { describe, it, expect } from 'vitest';
+import { CRCCalculator } from '../utils/crc';
+
+describe('CRCCalculator', () => {
+  it('should calculate CRC-16/CCITT-FALSE correctly', () => {
+    const data = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    const crc = CRCCalculator.crc16CcittFalse(data);
+    expect(crc).toBe(0x89C3);
+  });
+
+  it('should verify CRC-16/CCITT-FALSE', () => {
+    const data = new Uint8Array([0x01, 0x00, 0x02, 0x12, 0x34]);
+    const expectedCrc = 0x5FA3;
+    const valid = CRCCalculator.verifyCrc16CcittFalse(data, expectedCrc);
+    expect(valid).toBe(true);
+  });
+
+  it('should calculate CRC-32 correctly', () => {
+    const data = new Uint8Array([0x31, 0x32, 0x33, 0x34, 0x35]); // "12345"
+    const crc = CRCCalculator.crc32(data);
+    expect(crc).toBe(0x261DAEE5);
+  });
+
+  it('should calculate checksum8 correctly', () => {
+    const data = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    const checksum = CRCCalculator.checksum8(data);
+    expect(checksum).toBe(0x0A);
+  });
+});
+
+// packages/decoders/src/__tests__/efuse-decoder.test.ts
+import { describe, it, expect } from 'vitest';
+import { EFuseDecoder } from '../efuse-decoder';
+
+describe('EFuseDecoder', () => {
+  const decoder = new EFuseDecoder();
+
+  it('should decode valid EFuse frame', () => {
+    // Frame: [0xAA] [0x01] [0x00 0x02] [0x12 0x34] [CRC16] [0xBB]
+    const frame = new Uint8Array([0xAA, 0x01, 0x00, 0x02, 0x12, 0x34, 0x5F, 0xA3, 0xBB]);
+    
+    const decoded = decoder.decode(frame);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.protocol).toBe('efuse');
+    expect(decoded?.checksum?.valid).toBe(true);
+    expect(decoded?.fields.find(f => f.name === 'type')?.value).toBe(0x01);
+  });
+
+  it('should detect invalid start marker', () => {
+    const frame = new Uint8Array([0xFF, 0x01, 0x00, 0x02, 0x12, 0x34, 0x5F, 0xA3, 0xBB]);
+    const error = decoder.validate(frame);
+    expect(error?.code).toBe('INVALID_START_MARKER');
+  });
+
+  it('should detect CRC mismatch', () => {
+    const frame = new Uint8Array([0xAA, 0x01, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xFF, 0xBB]);
+    const error = decoder.validate(frame);
+    expect(error?.code).toBe('CRC_MISMATCH');
+  });
+
+  it('should encode EFuse frame', () => {
+    const fields = [
+      { name: 'type', value: 0x01, type: 'uint8' as const, raw: new Uint8Array([0x01]), offset: 1 },
+      { name: 'payload', value: new Uint8Array([0x12, 0x34]), type: 'bytes' as const, raw: new Uint8Array([0x12, 0x34]), offset: 4 },
+    ];
+
+    const encoded = decoder.encode(fields);
+    expect(encoded[0]).toBe(0xAA);
+    expect(encoded[encoded.length - 1]).toBe(0xBB);
+    expect(encoded[1]).toBe(0x01);
+    
+    // Verify it can be decoded back
+    const decoded = decoder.decode(encoded);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.checksum?.valid).toBe(true);
+  });
+});
+
+// packages/decoders/src/__tests__/cobs-decoder.test.ts
+import { describe, it, expect } from 'vitest';
+import { COBSDecoder } from '../cobs-decoder';
+
+describe('COBSDecoder', () => {
+  const decoder = new COBSDecoder();
+
+  it('should encode data with COBS', () => {
+    const data = new Uint8Array([0x00, 0x01, 0x00, 0x02]);
+    const fields = [{ name: 'data', value: data, type: 'bytes' as const, raw: data, offset: 0 }];
+    const encoded = decoder.encode(fields);
+    
+    // COBS encoding should not contain any 0x00 bytes except possibly at the end
+    const hasZero = Array.from(encoded.slice(0, -1)).some(b => b === 0);
+    expect(hasZero).toBe(false);
+  });
+
+  it('should decode COBS-encoded data', () => {
+    const data = new Uint8Array([0x00, 0x01, 0x00, 0x02]);
+    const fields = [{ name: 'data', value: data, type: 'bytes' as const, raw: data, offset: 0 }];
+    const encoded = decoder.encode(fields);
+    const decoded = decoder.decode(encoded);
+    
+    expect(decoded).not.toBeNull();
+    const decodedData = decoded?.fields[0].value as Uint8Array;
+    expect(Array.from(decodedData)).toEqual([0x00, 0x01, 0x00, 0x02]);
+  });
+});
+
+// packages/transports-uart/src/__tests__/uart-simulator.test.ts
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { UARTSimulator } from '../uart-simulator';
+
+describe('UARTSimulator', () => {
+  let simulator: UARTSimulator;
+
+  afterEach(async () => {
+    if (simulator) {
+      await simulator.close();
+    }
+  });
+
+  it('should echo data in loopback mode', async () => {
+    simulator = new UARTSimulator({ mode: 'loopback' });
+    
+    const received: Uint8Array[] = [];
+    simulator.read((chunk) => {
+      received.push(chunk);
+    });
+
+    const testData = new Uint8Array([0x01, 0x02, 0x03]);
+    await simulator.write(testData);
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    expect(received.length).toBeGreaterThan(0);
+    expect(Array.from(received[0])).toEqual([0x01, 0x02, 0x03]);
+  });
+
+  it('should generate periodic data in burst mode', async () => {
+    simulator = new UARTSimulator({
+      mode: 'burst',
+      burstSize: 3,
+      burstInterval: 50,
+    });
+
+    const received: Uint8Array[] = [];
+    simulator.read((chunk) => {
+      received.push(chunk);
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    expect(received.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('should track statistics', async () => {
+    simulator = new UARTSimulator({ mode: 'loopback' });
+    
+    const testData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05]);
+    await simulator.write(testData);
+
+    const stats = await simulator.getStats();
+    expect(stats.bytesTx).toBe(5);
+    expect(stats.messagesTx).toBe(1);
+  });
+});
+
+// apps/cli/package.json
+{
+  "name": "@commwatch/cli",
+  "version": "0.1.0",
+  "bin": {
+    "commwatch": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "build:binary": "pkg . --out-path ./bin",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@commwatch/proto-core": "workspace:*",
+    "@commwatch/transports-uart": "workspace:*",
+    "@commwatch/transports-can": "workspace:*",
+    "@commwatch/transports-eth": "workspace:*",
+    "@commwatch/decoders": "workspace:*",
+    "commander": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0",
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "targets": ["node18-win-x64", "node18-linux-x64", "node18-macos-x64"],
+    "outputPath": "bin"
+  }
+}
+
+// apps/desktop/package.json
+{
+  "name": "@commwatch/desktop",
+  "version": "0.1.0",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "concurrently \"tsc -b --watch\" \"vite\" \"electron .\"",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "@commwatch/proto-core": "workspace:*",
+    "@commwatch/transports-uart": "workspace:*",
+    "@commwatch/transports-can": "workspace:*",
+    "@commwatch/transports-eth": "workspace:*",
+    "@commwatch/transports-spi": "workspace:*",
+    "@commwatch/transports-i2c": "workspace:*",
+    "@commwatch/decoders": "workspace:*",
+    "@commwatch/ui-kit": "workspace:*",
+    "electron": "^25.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.0",
+    "electron-builder": "^24.6.3",
+    "typescript": "^5.0.0",
+    "vite": "^4.4.0",
+    "concurrently": "^8.2.0"
+  },
+  "build": {
+    "appId": "com.commwatch.app",
+    "productName": "CommWatch",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "build/icon.icns"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png"
+    }
+  }
+}
+
+// .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [18.x]
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Run tests
+        run: pnpm test
+      
+      - name: Run build
+        run: pnpm build
+
+  build-artifacts:
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Build all packages
+        run: pnpm run build:all
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            apps/vscode-ext/*.vsix
+            apps/desktop/release/*
+            apps/cli/bin/*
+
+// .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Build artifacts
+        run: pnpm run build:all
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            apps/vscode-ext/*.vsix
+            apps/desktop/release/*
+            apps/cli/bin/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
